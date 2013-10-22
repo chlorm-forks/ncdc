@@ -192,9 +192,6 @@ static hub_user_t *user_add(hub_t *hub, const char *name, const char *cid) {
     g_hash_table_insert(hub_uids, &(u->uid), u);
   // notify the UI
   uit_hub_userchange(hub->tab, UIHUB_UC_JOIN, u);
-  // notify the dl manager
-  if(hub->nick_valid)
-    dl_user_join(u->uid);
   return u;
 }
 
@@ -1110,8 +1107,6 @@ static void adc_handle(net_t *net, char *msg, int _len) {
         if(u->sid == hub->sid) {
           hub->state = ADC_S_NORMAL;
           hub->isop = u->isop;
-          if(!hub->nick_valid)
-            dl_user_join(0);
           hub->nick_valid = TRUE;
           hub->joincomplete = TRUE;
           // This means we also have an IP, probably
@@ -1478,10 +1473,6 @@ static void nmdc_handle(net_t *net, char *cmd, int _len) {
         net_writestr(hub->net, "$Version 1,0091|");
         hub_send_nfo(hub);
         net_writestr(hub->net, "$GetNickList|");
-        // Most hubs send the user list after our nick has been validated (in
-        // contrast to ADC), but it doesn't hurt to call this function at this
-        // point anyway.
-        dl_user_join(0);
       }
     } else {
       hub_user_t *u = user_add(hub, nick, NULL);
