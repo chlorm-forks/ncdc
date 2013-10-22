@@ -155,6 +155,7 @@ static GHashTable *queue_users = NULL;
 // uid -> dl_user lookup table for users that have (u->selected || u->active)
 static GHashTable *queue_busy = NULL;
 
+static void dl_queue_sync();
 
 
 // Utility function that returns an error string for DLE_* errors.
@@ -270,7 +271,7 @@ static void dl_user_setstate(dl_user_t *du, int state) {
     return;
   }
 
-  // TODO: check whether we can initiate a download again.
+  dl_queue_sync();
 }
 
 
@@ -351,25 +352,15 @@ static void dl_user_rm(dl_t *dl, int i) {
 
 // Keeping the actual active downloads in sync with ->selected
 
+static gboolean dl_queue_sync_defer; // whether a new sync is queued
 
-#if 0
-// Starts a connection with a user or initiates a download if we're already
-// connected.
-static gboolean dl_queue_start_user(dl_user_t *du) {
-  g_return_val_if_fail(dl_queue_start_istarget(du), FALSE);
 
-  // If we're not connected yet, just connect
-  if(du->state == DLU_NCO) {
-    g_debug("dl:%016"G_GINT64_MODIFIER"x: trying to open a connection", du->uid);
-    hub_user_t *u = g_hash_table_lookup(hub_uids, &du->uid);
-    dl_user_setstate(du, DLU_EXP);
-    hub_opencc(u->hub, u);
-    return FALSE;
-  }
-
-  // Otherwise, initiate a download.
+static void dl_queue_sync_reqdl(dl_user_t *du) {
   dl_user_dl_t *dud = dl_user_getdl(du);
-  g_return_val_if_fail(dud, FALSE);
+  // TODO: This should not prevent a download from starting if there is still
+  // another user with (!selected && active)
+  if(!dud)
+    return;
   dl_t *dl = dud->dl;
   g_debug("dl:%016"G_GINT64_MODIFIER"x: using connection for %s", du->uid, dl->dest);
 
@@ -377,16 +368,54 @@ static gboolean dl_queue_start_user(dl_user_t *du) {
   du->active = dud;
   dl_user_setstate(du, DLU_ACT);
   cc_download(du->cc, dl);
-  return TRUE;
 }
-#endif
+
+
+static void dl_queue_sync_reqconn(dl_user_t *du) {
+  hub_user_t *u = g_hash_table_lookup(hub_uids, &du->uid);
+  if(!u || !u->hub->nick_valid)
+    return;
+  g_debug("dl:%016"G_GINT64_MODIFIER"x: trying to open a connection", du->uid);
+  dl_user_setstate(du, DLU_EXP);
+  hub_opencc(u->hub, u);
+}
+
+
+static gboolean dl_queue_sync_do(gpointer dat) {
+  dl_user_t *du;
+  GHashTableIter iter;
+  g_hash_table_iter_init(&iter, queue_busy);
+  while(g_hash_table_iter_next(&iter, NULL, (gpointer *)&du)) {
+    if(!du->selected)
+      continue;
+
+    // Connected but not downloading? Request a new download.
+    if(du->state == DLU_IDL)
+      dl_queue_sync_reqdl(du);
+    // Not even connected? Try a connect.
+    else if(du->state == DLU_NCO)
+      dl_queue_sync_reqconn(du);
+  }
+
+  // TODO: Disconnect excessive download connections
+
+  dl_queue_sync_defer = FALSE;
+  return FALSE;
+}
+
+
+static void dl_queue_sync() {
+  if(!dl_queue_sync_defer)
+    g_idle_add(dl_queue_sync_do, NULL);
+  dl_queue_sync_defer = TRUE;
+}
 
 
 
 
 // Updating ->selected
 
-static int dl_queue_select_src; // timeout or idle source for the next period
+static int dl_queue_select_src; // timeout source for the next period
 
 
 static gboolean dl_queue_select_istarget(dl_user_t *du) {
@@ -440,6 +469,7 @@ static gboolean dl_queue_select_do(gpointer dat) {
   // In the improved implementation, some users need to be disconnected here,
   // too, if we are downloading from more users than what has been selected.
 
+  dl_queue_sync();
   if(dat)
     return TRUE;
   dl_queue_select_src = g_timeout_add_seconds(DL_PERIODLENGTH, dl_queue_select_do, dl_queue_select_do);
