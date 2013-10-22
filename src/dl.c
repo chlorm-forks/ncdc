@@ -41,39 +41,43 @@ struct dl_user_dl_t {
 #define DLU_NCO  0 // Not connected, ready for connection
 #define DLU_EXP  1 // Expecting a dl connection
 #define DLU_IDL  2 // dl connected, idle
-#define DLU_ACT  3 // dl connected, downloading
-#define DLU_WAI  4 // Not connected, waiting for reconnect timeout
+#define DLU_REQ  3 // dl connected, download requested
+#define DLU_ACT  4 // dl connected, downloading
+#define DLU_WAI  5 // Not connected, waiting for reconnect timeout
 
 struct dl_user_t {
   int state;            // DLU_*
   int timeout;          // source id of the timeout function in DLU_WAI
   guint64 uid;
-  cc_t *cc;             // Always when state = IDL or ACT, may be set or NULL in EXP
+  cc_t *cc;             // Always when state = IDL, REQ or ACT, may be set or NULL in EXP
   GSequence *queue;     // list of dl_user_dl_t, ordered by dl_user_dl_sort()
-  dl_user_dl_t *active; // when state = DLU_ACT, the dud that is being downloaded (NULL if it had been removed from the queue while downloading)
+  dl_user_dl_t *active; // when state = DLU_ACT/REQ, the dud that is being downloaded (NULL if it had been removed from the queue while downloading)
   gboolean selected;
 };
 
 /* State machine for dl_user.state:
  *
- *           8  /-----\
- *        .<--- | WAI | <-------------------------------.
- *       /      \-----/     |             |             |
- *       |                2 |           4 |  .<------.  | 7
- *       v                  |             | /       6 \ |
- *    /-----\  1         /-----\  3    /-----\  5    /-----\
- * -> | NCO | ---------> | EXP | ----> | IDL | ----> | ACT |
- *    \-----/            \-----/       \-----/       \-----/
+ *          10  /-----\
+ *        .<--- | WAI | <---------------------------------------------.
+ *       /      \-----/     |             |             |             |
+ *       |                2 |           4 |           6 |           8 |
+ *       v                  |             |             |             |
+ *    /-----\  1         /-----\  3    /-----\  5    /-----\  7    /-----\
+ * -> | NCO | ---------> | EXP | ----> | IDL | ----> | REQ | ----> | ACT |
+ *    \-----/            \-----/       \-----/       \-----/       \-----/
+ *                                        \                         9 /
+ *                                         `<------------------------'
  *
  *  1. We're requesting a connect
  *  2. No reply, connection timed out or we lost the $Download game on NMDC
  *  3. Successful connection and handshake
  *  4. Idle timeout / user disconnect
- *  5. Start of download
- *  6. Download (chunk) finished
- *  7. Idle timeout / user disconnect / download aborted / no slots free / error while downloading
- *  8. Reconnect timeout expired
- *     (currently hardcoded to 60 sec, probably want to make this configurable)
+ *  5. We're requesting a download (CGET)
+ *  6. Idle timeout / user disconnect / no slots free
+ *  7. Start of download (CSND)
+ *  8. Idle timeout / user disconnect / download aborted / error while downloading
+ *  9. Download (segment) finished
+ * 10. Reconnect timeout expired
  */
 
 
@@ -144,6 +148,9 @@ struct dl_t {
 
 // This should probably be a setting
 #define DL_PERIODLENGTH 60
+
+// How long a user stays in the WAI state
+#define DL_RECONNTIMEOUT 10
 
 // Download queue.
 // Key = dl->hash, Value = dl_t
@@ -244,7 +251,7 @@ static void dl_user_setstate(dl_user_t *du, int state) {
   // Handle reconnect timeout
   // x -> WAI
   if(state >= 0 && du->state != DLU_WAI && state == DLU_WAI)
-    du->timeout = g_timeout_add_seconds_full(G_PRIORITY_LOW, 10, dl_user_waitdone, du, NULL);
+    du->timeout = g_timeout_add_seconds_full(G_PRIORITY_LOW, DL_RECONNTIMEOUT, dl_user_waitdone, du, NULL);
   // WAI -> X
   else if(state >= 0 && du->state == DLU_WAI && state != DLU_WAI)
     g_source_remove(du->timeout);
@@ -258,9 +265,7 @@ static void dl_user_setstate(dl_user_t *du, int state) {
   if(state >= 0)
     du->state = state;
 
-  if(state == DLU_ACT || du->selected)
-    g_hash_table_insert(queue_busy, &du->uid, du);
-  else
+  if(!du->selected && state != DLU_ACT)
     g_hash_table_remove(queue_busy, &du->uid);
 
   // Check whether there is any value in keeping this dl_user struct in memory
@@ -292,9 +297,17 @@ void dl_user_cc(guint64 uid, cc_t *cc) {
   dl_user_t *du = g_hash_table_lookup(queue_users, &uid);
   if(!du)
     return;
-  g_return_if_fail(!cc || du->state == DLU_NCO || du->state == DLU_EXP || du->state == DLU_ACT);
+  g_return_if_fail(!cc || du->state == DLU_NCO || du->state == DLU_EXP || du->state == DLU_ACT || du->state == DLU_REQ);
   du->cc = cc;
   dl_user_setstate(du, cc ? DLU_IDL : DLU_WAI);
+}
+
+
+// Called from cc.c when we receive a CSND, to indicate that we can move to DLU_ACT
+void dl_user_active(guint64 uid) {
+  dl_user_t *du = g_hash_table_lookup(queue_users, &uid);
+  if(du)
+    dl_user_setstate(du, DLU_ACT);
 }
 
 
@@ -366,7 +379,7 @@ static void dl_queue_sync_reqdl(dl_user_t *du) {
 
   // Update state and connect
   du->active = dud;
-  dl_user_setstate(du, DLU_ACT);
+  dl_user_setstate(du, DLU_REQ);
   cc_download(du->cc, dl);
 }
 

@@ -598,6 +598,7 @@ static void handle_adcsnd(cc_t *cc, gboolean tthl, guint64 start, gint64 bytes) 
     return;
   }
 
+  dl_user_active(cc->uid);
   cc->last_length = bytes;
   cc->last_tthl = tthl;
   if(!tthl) {
