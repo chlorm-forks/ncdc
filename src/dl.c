@@ -52,7 +52,13 @@ struct dl_user_t {
   cc_t *cc;             // Always when state = IDL, REQ or ACT, may be set or NULL in EXP
   GSequence *queue;     // list of dl_user_dl_t, ordered by dl_user_dl_sort()
   dl_user_dl_t *active; // when state = DLU_ACT/REQ, the dud that is being downloaded (NULL if it had been removed from the queue while downloading)
-  gboolean selected;
+  gboolean selected : 1;
+  // Back-off timer. 'failures' is increased by one (up to DL_MAXBACKOFF) when
+  // a user is selected and reset to 0 when in the ACT state. 'periods' is set
+  // to 2^failures when a user is unselected, and decreased by one at the start
+  // of each period. A user is not selected when 'periods > 0'.
+  guint32 backoff_periods : 7;
+  guint32 backoff_failures : 4;
 };
 
 /* State machine for dl_user.state:
@@ -149,8 +155,15 @@ struct dl_t {
 // This should probably be a setting
 #define DL_PERIODLENGTH 60
 
+// Maximum time that a repeatedly unavailable user will stay in the back-off
+// queue.  Actual time is measured in (1<<DL_MAXBACKOFF)*DL_PERIODLENGTH
+// seconds.  A value of MAXBACKOFF of 6 and a PERIODLENGTH of 60 thus gives a
+// maximum backoff of 64 minutes.
+#define DL_MAXBACKOFF 6
+
 // How long a user stays in the WAI state
 #define DL_RECONNTIMEOUT 10
+
 
 // Download queue.
 // Key = dl->hash, Value = dl_t
@@ -267,6 +280,9 @@ static void dl_user_setstate(dl_user_t *du, int state) {
 
   if(!du->selected && state != DLU_ACT)
     g_hash_table_remove(queue_busy, &du->uid);
+
+  if(state == DLU_ACT)
+    du->backoff_failures = 0;
 
   // Check whether there is any value in keeping this dl_user struct in memory
   if(du->state == DLU_NCO && !g_sequence_get_length(du->queue)) {
@@ -432,6 +448,9 @@ static int dl_queue_select_src; // timeout source for the next period
 
 
 static gboolean dl_queue_select_istarget(dl_user_t *du) {
+  if(du->backoff_periods)
+    return FALSE;
+
   // TODO: dl_user_getdl() fails if all files from this user are already being
   // downloaded. When selecting new peers this shouldn't matter, we'll likely
   // disconnect the existing users anyway.
@@ -456,14 +475,21 @@ static gboolean dl_queue_select_istarget(dl_user_t *du) {
 static gboolean dl_queue_select_do(gpointer dat) {
   int freeslots = var_get_int(0, VAR_download_slots);
 
-  // Unselect currently selected users
+  // Pass through the list of users and,
+  // - Unselect currently selected users
+  // - Decrease the backoff_periods by one
   dl_user_t *du;
   GHashTableIter iter;
-  g_hash_table_iter_init(&iter, queue_busy);
+  g_hash_table_iter_init(&iter, queue_users);
   while(g_hash_table_iter_next(&iter, NULL, (gpointer *)&du)) {
-    du->selected = FALSE;
-    if(!du->active)
-      g_hash_table_remove(queue_busy, &du->uid);
+    if(du->selected) {
+      du->selected = FALSE;
+      du->backoff_periods = 1U << du->backoff_failures;
+      if(!du->active)
+        g_hash_table_remove(queue_busy, &du->uid);
+    }
+    if(du->backoff_periods)
+      du->backoff_periods--;
   }
 
   // Current implementation just selects the first $freeslots users in the hash
@@ -474,8 +500,15 @@ static gboolean dl_queue_select_do(gpointer dat) {
       continue;
     freeslots--;
     du->selected = TRUE;
+    du->backoff_failures = MIN(du->backoff_failures+1, DL_MAXBACKOFF);
     g_hash_table_insert(queue_busy, &du->uid, du);
   }
+
+  // TODO: If there are less candidate users in the queue than our number of
+  // download slots, we could add some users with backoff_periods>0 to the list
+  // of candidates. If we do that, however, we need to be careful not to
+  // increase its backoff_failures count if it fails again, otherwise the
+  // backoff timer may increase a bit too fast for that user.
 
   // TODO: In the naive implementation, users with (!du->selected &&
   // du->active) should be disconnected here.
