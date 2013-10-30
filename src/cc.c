@@ -547,6 +547,12 @@ void cc_download(cc_t *cc, dl_t *dl) {
     gint64 len = dl->islist ? -1 :
       MIN(((gint64)cc->dlthread->allocated * DLFILE_CHUNKSIZE) - cc->dlthread->len, (gint64)(dl->size - cc->last_offset));
 
+    // Try to obtain the number of slots in use (using a GFI on ADC)
+    // XXX: This only works if the other client is ncdc. Other clients don't
+    //   include the slot count in the reply. :-(
+    if(!dl->islist && cc->adc)
+      net_writef(cc->net, "CGFI file %s\n", fn);
+
     if(cc->adc)
       net_writef(cc->net, "CGET file %s %"G_GUINT64_FORMAT" %"G_GINT64_FORMAT"\n", fn, cc->last_offset, len);
     else
@@ -1011,6 +1017,20 @@ static void adc_handle(net_t *net, char *msg, int _len) {
       g_string_append_c(r, '\n');
       net_writestr(cc->net, r->str);
       g_string_free(r, TRUE);
+    }
+    break;
+
+  case ADCC_RES:
+    if(cc->state == CCS_TRANSFER && cc->dlthread) {
+      char *sl = adc_getparam(cmd.argv, "SL", NULL);
+      if(!sl)
+        break;
+      long sll = strtol(sl, NULL, 10);
+      if(sll < 1)
+        break;
+      hub_user_t *u = g_hash_table_lookup(hub_uids, &cc->uid);
+      long ls = u->slots - sll;
+      cc->dlthread->ulslots = MAX(0, MIN(255, ls));
     }
     break;
 

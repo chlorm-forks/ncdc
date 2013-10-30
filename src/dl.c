@@ -336,8 +336,9 @@ void dl_user_updatestats(guint64 uid, float duration, guint64 size, int slots) {
   if(!du || duration < 0.5)
     return;
   float newtime = du->active_time + duration;
-  du->avg_speed = ((du->avg_speed * du->active_time) + ((float)size)) / newtime;
-  du->avg_ulslots = ((du->avg_ulslots * du->active_time) + (((float)slots) * duration)) / newtime;
+  float nslots = slots ? (float)slots : du->avg_ulslots;
+  du->avg_ulslots = ((du->avg_ulslots * du->active_time) + (nslots * duration)) / newtime;
+  du->avg_speed = ((du->avg_speed * du->active_time) + (((float)size) * nslots)) / newtime;
   du->active_time = newtime;
 }
 
