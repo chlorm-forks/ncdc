@@ -125,6 +125,14 @@ char *localtime_fmt(const char *fmt) {
 }
 
 
+// Get the current time as a floating-point time_t with sub-second precision.
+double time_double() {
+  GTimeVal t;
+  g_get_current_time(&t);
+  return ((double)t.tv_sec) + (((double)t.tv_usec) / G_USEC_PER_SEC);
+}
+
+
 // Turns any path into an absolute path. Doesn't do any canonicalization.
 static char *path_absolute(const char *path) {
   char *p = NULL;

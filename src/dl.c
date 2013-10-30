@@ -52,6 +52,9 @@ struct dl_user_t {
   cc_t *cc;             // Always when state = IDL, REQ or ACT, may be set or NULL in EXP
   GSequence *queue;     // list of dl_user_dl_t, ordered by dl_user_dl_sort()
   dl_user_dl_t *active; // when state = DLU_ACT/REQ, the dud that is being downloaded (NULL if it had been removed from the queue while downloading)
+  float active_time;
+  float avg_speed;
+  float avg_ulslots;
   gboolean selected : 1;
   // Back-off timer. 'failures' is increased by one (up to DL_MAXBACKOFF) when
   // a user is selected and reset to 0 when in the ACT state. 'periods' is set
@@ -324,6 +327,18 @@ void dl_user_active(guint64 uid) {
   dl_user_t *du = g_hash_table_lookup(queue_users, &uid);
   if(du)
     dl_user_setstate(du, DLU_ACT);
+}
+
+
+// Called from cc.c when a chunk has been downloaded
+void dl_user_updatestats(guint64 uid, float duration, guint64 size, int slots) {
+  dl_user_t *du = g_hash_table_lookup(queue_users, &uid);
+  if(!du || duration < 0.5)
+    return;
+  float newtime = du->active_time + duration;
+  du->avg_speed = ((du->avg_speed * du->active_time) + ((float)size)) / newtime;
+  du->avg_ulslots = ((du->avg_ulslots * du->active_time) + (((float)slots) * duration)) / newtime;
+  du->active_time = newtime;
 }
 
 

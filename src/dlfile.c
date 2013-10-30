@@ -60,6 +60,8 @@ struct dlfile_thread_t {
   guint32 chunk;     /* Current chunk number */
   guint32 len;       /* Number of bytes downloaded into this chunk */
   gboolean busy;     /* Whether this thread is being used */
+  float dlstart;
+  guint64 downloaded;/* Number of bytes downloaded in the current/last segment (used to measure average download speed for dl.c) */
   /* Fields for deferred error reporting */
   guint64 uid;
   char *err_msg, *uerr_msg;
@@ -440,6 +442,8 @@ dlfile_thread_t *dlfile_getchunk(dl_t *dl, guint64 uid, guint64 speed) {
     t->len = 0;
     t->uid = uid;
     t->busy = TRUE;
+    t->downloaded = 0;
+    t->dlstart = time_double();
     dl->hassize = FALSE;
     dl->have = 0;
     dl->allbusy = TRUE;
@@ -491,6 +495,8 @@ dlfile_thread_t *dlfile_getchunk(dl_t *dl, guint64 uid, guint64 speed) {
     t->allocated = t->avail;
   t->busy = TRUE;
   t->uid = uid;
+  t->dlstart = time_double();
+  t->downloaded = 0;
   dl->active_threads++;
 
   /* Go through the list again to update dl->allbusy */
@@ -569,6 +575,7 @@ gboolean dlfile_recv(void *vt, const char *buf, int len) {
   dlfile_thread_t *t = vt;
   if(!dlfile_recv_write(t, buf, len))
     return FALSE;
+  t->downloaded += len;
 
   while(len > 0) {
     guint32 inchunk = MIN((guint32)len, DLFILE_CHUNKSIZE - t->len);
@@ -614,6 +621,9 @@ void dlfile_recv_done(dlfile_thread_t *t) {
   dl_t *dl = t->dl;
   dl->active_threads--;
   t->busy = FALSE;
+
+  if(t->downloaded)
+    dl_user_updatestats(t->uid, time_double()-t->dlstart, t->downloaded, 1); // TODO: Get slot counts
 
   gboolean freet = FALSE;
   if(dl->islist ? dl->hassize && dl->have == dl->size : !t->avail) {
