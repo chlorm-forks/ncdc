@@ -60,7 +60,7 @@ struct dlfile_thread_t {
   guint32 chunk;     /* Current chunk number */
   guint32 len;       /* Number of bytes downloaded into this chunk */
   gboolean busy;     /* Whether this thread is being used */
-  float dlstart;
+  double dlstart;
   guint32 ulslots;   /* Number of used upload slots at the other user (used to measure competition for dl.c) */
   guint64 downloaded;/* Number of bytes downloaded in the current/last segment (used to measure average download speed for dl.c) */
   /* Fields for deferred error reporting */
@@ -487,10 +487,10 @@ dlfile_thread_t *dlfile_getchunk(dl_t *dl, guint64 uid, guint64 speed) {
   }
 
   /* Number of chunks to request as one segment. The size of a segment is
-   * chosen to approximate a download time of ~5 min. */
+   * chosen to approximate a download time of ~1 min. */
   guint32 minsegment = var_get_int64(0, VAR_download_segment);
   if(minsegment) {
-    guint32 chunks = MIN(G_MAXUINT32, 1 + ((speed * 300) / DLFILE_CHUNKSIZE));
+    guint32 chunks = MIN(G_MAXUINT32, 1 + ((speed * 60) / DLFILE_CHUNKSIZE));
     chunks = MAX(chunks, (minsegment+DLFILE_CHUNKSIZE-1) / DLFILE_CHUNKSIZE);
     t->allocated = MIN(t->avail, chunks);
   } else

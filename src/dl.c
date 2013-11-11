@@ -167,6 +167,9 @@ struct dl_t {
 // How long a user stays in the WAI state
 #define DL_RECONNTIMEOUT 10
 
+// Switch between naive or improved BRPS implementation
+#define DL_BRPS_NAIVE 1
+
 
 // Download queue.
 // Key = dl->hash, Value = dl_t
@@ -331,12 +334,13 @@ void dl_user_active(guint64 uid) {
 
 
 // Called from cc.c when a chunk has been downloaded
-void dl_user_updatestats(guint64 uid, float duration, guint64 size, int slots) {
+void dl_user_updatestats(guint64 uid, double duration, guint64 size, int slots) {
   dl_user_t *du = g_hash_table_lookup(queue_users, &uid);
-  if(!du || duration < 0.5)
+  if(!du || duration < 0.2)
     return;
   float newtime = du->active_time + duration;
-  float nslots = slots ? (float)slots : du->avg_ulslots;
+  float nslots = slots ? (float)slots : MAX(du->avg_ulslots, 1.0);
+  //g_debug("Updatestats: %016"G_GINT64_MODIFIER"x: duration = %.1f  size = %f  slots = %f", du->uid, duration, (float)size, nslots);
   du->avg_ulslots = ((du->avg_ulslots * du->active_time) + (nslots * duration)) / newtime;
   du->avg_speed = ((du->avg_speed * du->active_time) + (((float)size) * nslots)) / newtime;
   du->active_time = newtime;
@@ -396,6 +400,10 @@ static void dl_user_rm(dl_t *dl, int i) {
 
 
 // Keeping the actual active downloads in sync with ->selected
+
+// TODO: minislot files probably shouldn't be subject to the "slow" peer
+// selection path, and may be handled better by always allowing those in the
+// sync path.
 
 static gboolean dl_queue_sync_defer; // whether a new sync is queued
 
@@ -481,16 +489,12 @@ static gboolean dl_queue_select_istarget(dl_user_t *du) {
   if(!u || !u->hub->nick_valid)
     return FALSE;
 
-  // TODO: Exclude unavailable users with a backoff timer
-
   // If the above holds, we're safe
   return TRUE;
 }
 
 
-static gboolean dl_queue_select_do(gpointer dat) {
-  int freeslots = var_get_int(0, VAR_download_slots);
-
+static void dl_queue_select_reset() {
   // Pass through the list of users and,
   // - Unselect currently selected users
   // - Decrease the backoff_periods by one
@@ -507,24 +511,127 @@ static gboolean dl_queue_select_do(gpointer dat) {
     if(du->backoff_periods)
       du->backoff_periods--;
   }
+}
 
-  // Current implementation just selects the first $freeslots users in the hash
-  // table.
+
+static void dl_queue_select_select(dl_user_t *du) {
+  du->selected = TRUE;
+  du->backoff_failures = du->state == DLU_ACT ? 0 : MIN(du->backoff_failures+1, DL_MAXBACKOFF);
+  g_hash_table_insert(queue_busy, &du->uid, du);
+}
+
+
+static int dl_queue_select_new(int freeslots) {
+  GPtrArray *lst = g_ptr_array_new();
+
+  dl_user_t *du;
+  GHashTableIter iter;
   g_hash_table_iter_init(&iter, queue_users);
-  while(freeslots > 0 && g_hash_table_iter_next(&iter, NULL, (gpointer *)&du)) {
-    if(!dl_queue_select_istarget(du))
-      continue;
-    freeslots--;
-    du->selected = TRUE;
-    du->backoff_failures = MIN(du->backoff_failures+1, DL_MAXBACKOFF);
-    g_hash_table_insert(queue_busy, &du->uid, du);
+  while(g_hash_table_iter_next(&iter, NULL, (gpointer *)&du)) {
+    if(du->avg_speed < 0.5 && dl_queue_select_istarget(du)) {
+      g_debug("BRPS-NEW: %016"G_GINT64_MODIFIER"x: c = %.1f  sl = %.1f  t = %.1f", du->uid, du->avg_speed, du->avg_ulslots, du->active_time);
+      g_ptr_array_add(lst, du);
+    } else if(du->avg_speed < 0.5)
+      g_debug("BRPS-NEW: Ignoring %016"G_GINT64_MODIFIER"x: c = %.1f  sl = %.1f  t = %.1f  b = %d", du->uid, du->avg_speed, du->avg_ulslots, du->active_time, (int)du->backoff_periods);
   }
+
+  while(lst->len > 0 && freeslots > 0) {
+    int idx = g_random_int_range(0, lst->len);
+    g_debug("BRPS-NEW: Selecting %016"G_GINT64_MODIFIER"x", ((dl_user_t *)lst->pdata[idx])->uid);
+    dl_queue_select_select(lst->pdata[idx]);
+    g_ptr_array_remove_index_fast(lst, idx);
+    freeslots--;
+  }
+
+  g_ptr_array_unref(lst);
+  return freeslots;
+}
+
+
+static gint dl_queue_select_sort(gconstpointer a, gconstpointer b) {
+  dl_user_t *da = *((dl_user_t **)a);
+  dl_user_t *db = *((dl_user_t **)b);
+  return da->avg_speed > db->avg_speed ? -1 : db->avg_speed > da->avg_speed;
+}
+
+
+static void dl_queue_select_brps_consts(GPtrArray *lst, int freeslots, double comp, double invcomp, int *K, double *sum) {
+  *K = freeslots;
+  *sum = 0.0;
+  double isum = 0.0;
+  int i;
+
+  for(i=0; i<freeslots; i++)
+    isum += pow(1.0 / ((dl_user_t *)(lst->pdata[i]))->avg_speed, invcomp);
+  *sum = isum;
+
+  while(*K <= lst->len && pow((double)(*K - freeslots) / isum, comp-1.0) < ((dl_user_t *)(lst->pdata[*K-1]))->avg_speed) {
+    *sum = isum;
+    if(*K < lst->len)
+      isum += pow(1.0 / ((dl_user_t *)(lst->pdata[*K]))->avg_speed, invcomp);
+    (*K)++;
+  }
+  (*K)--;
+}
+
+
+static void dl_queue_select_brps(int freeslots) {
+  double comp = 0.0; // |D|, estimate of the competition in the network
+  double invcomp; // 1 / (|D|-1), used often
+  double sum;
+  int i;
+  int K;
+  dl_user_t *du;
+  GHashTableIter iter;
+  GPtrArray *lst = g_ptr_array_new();
+
+  // TODO: Add a small probability to all targeted source peers, to ensure that
+  // every peer as a non-zero connection probability.
 
   // TODO: If there are less candidate users in the queue than our number of
   // download slots, we could add some users with backoff_periods>0 to the list
   // of candidates. If we do that, however, we need to be careful not to
   // increase its backoff_failures count if it fails again, otherwise the
   // backoff timer may increase a bit too fast for that user.
+  g_hash_table_iter_init(&iter, queue_users);
+  while(g_hash_table_iter_next(&iter, NULL, (gpointer *)&du)) {
+    if(du->avg_speed >= 0.5 && dl_queue_select_istarget(du)) {
+      g_ptr_array_add(lst, du);
+      comp += du->avg_ulslots;
+    }
+  }
+  g_ptr_array_sort(lst, dl_queue_select_sort);
+
+  if(lst->len < freeslots)
+    freeslots = lst->len;
+  comp /= 5.0; // Estimated average number of download slots that everyone uses. XXX: Should be dependent on the number of target users?
+  if(comp <= 1.3)
+    comp = 1.3;
+  invcomp = 1.0 / (comp - 1.0);
+  dl_queue_select_brps_consts(lst, freeslots, comp, invcomp, &K, &sum);
+
+  sum = (double)(K - freeslots) / sum;
+  g_debug("BRPS: |D| = %.1f  K = %d  L = %d  |S| = %d", comp, K, freeslots, (int)lst->len);
+  for(i=0; i<lst->len; i++) {
+    dl_user_t *du = lst->pdata[i];
+    double p = i >= K ? 0.0 : 1.0 - (sum * pow(1.0 / du->avg_speed, invcomp));
+    if(p > g_random_double())
+      dl_queue_select_select(du);
+    g_debug("BRPS: %016"G_GINT64_MODIFIER"x  c = %.1f  p = %.3f%s", du->uid, du->avg_speed, p, du->selected ? " (selected)" : "");
+  }
+
+  g_ptr_array_unref(lst);
+}
+
+
+static gboolean dl_queue_select_do(gpointer dat) {
+  int freeslots = var_get_int(0, VAR_download_slots);
+
+  dl_queue_select_reset();
+
+  int newslots = dl_queue_select_new(freeslots);
+  if(DL_BRPS_NAIVE ? newslots == freeslots : newslots > 0)
+    dl_queue_select_brps(newslots);
 
   // TODO: In the naive implementation, users with (!du->selected &&
   // du->active) should be disconnected here.
