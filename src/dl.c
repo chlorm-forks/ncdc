@@ -247,6 +247,14 @@ static void dl_user_dl_free(gpointer x) {
 }
 
 
+// Sort function for dl_user structs, orders by avg_speed, descending.
+static gint dl_queue_sort_speed(gconstpointer a, gconstpointer b) {
+  dl_user_t *da = *((dl_user_t **)a);
+  dl_user_t *db = *((dl_user_t **)b);
+  return da->avg_speed > db->avg_speed ? -1 : db->avg_speed > da->avg_speed;
+}
+
+
 // Get the highest-priority file in the users' queue that is not already being
 // downloaded. This function can be assumed to be relatively fast, in most
 // cases the first iteration will be enough, in the worst case it at most
@@ -434,6 +442,43 @@ static void dl_queue_sync_reqconn(dl_user_t *du) {
 }
 
 
+static void dl_queue_sync_kill() {
+  // In the naive implementation, all users with (!du->selected && du->active)
+  //   are disconnected here.
+  // In the improved implementation, only the slowest $n users are
+  //   disconnected, where $n = $active_users - $selected_users.
+  int i, numsel = 0;
+  GPtrArray *lst = DL_BRPS_NAIVE ? g_ptr_array_new() : NULL;
+
+  dl_user_t *du;
+  GHashTableIter iter;
+  g_hash_table_iter_init(&iter, queue_busy);
+  while(g_hash_table_iter_next(&iter, NULL, (gpointer *)&du)) {
+    if(DL_BRPS_NAIVE && !du->selected && du->cc) {
+      cc_disconnect(du->cc, TRUE);
+      du->active = NULL;
+    }
+    if(!DL_BRPS_NAIVE && du->selected)
+      numsel++;
+    if(!DL_BRPS_NAIVE && !du->selected && du->cc)
+      g_ptr_array_add(lst, du);
+  }
+
+  if(lst && lst->len > numsel) {
+    g_ptr_array_sort(lst, dl_queue_sort_speed);
+    // Slowest sorted last, so disconnect from the bottom
+    for(i=lst->len-1; i>=numsel; i--) {
+      dl_user_t *du = lst->pdata[i];
+      cc_disconnect(du->cc, TRUE);
+      du->active = NULL;
+    }
+  }
+
+  if(DL_BRPS_NAIVE)
+    g_ptr_array_unref(lst);
+}
+
+
 static gboolean dl_queue_sync_do(gpointer dat) {
   dl_user_t *du;
   GHashTableIter iter;
@@ -450,7 +495,12 @@ static gboolean dl_queue_sync_do(gpointer dat) {
       dl_queue_sync_reqconn(du);
   }
 
-  // TODO: Disconnect excessive download connections
+  // Disconnect excessive download connections.
+  // As an optimization, in the naive implementation this only has to be done
+  // once after a new selection has been made. In the improved implementation
+  // this needs to be done once after a new selection and every time a
+  // ->selected user moves to the ACT state.
+  dl_queue_sync_kill();
 
   dl_queue_sync_defer = FALSE;
   return FALSE;
@@ -548,13 +598,6 @@ static int dl_queue_select_new(int freeslots) {
 }
 
 
-static gint dl_queue_select_sort(gconstpointer a, gconstpointer b) {
-  dl_user_t *da = *((dl_user_t **)a);
-  dl_user_t *db = *((dl_user_t **)b);
-  return da->avg_speed > db->avg_speed ? -1 : db->avg_speed > da->avg_speed;
-}
-
-
 static void dl_queue_select_brps_consts(GPtrArray *lst, int freeslots, double comp, double invcomp, int *K, double *sum) {
   *K = freeslots;
   *sum = 0.0;
@@ -600,7 +643,11 @@ static void dl_queue_select_brps(int freeslots) {
       comp += du->avg_ulslots;
     }
   }
-  g_ptr_array_sort(lst, dl_queue_select_sort);
+  if(!lst->len) {
+    g_ptr_array_unref(lst);
+    return;
+  }
+  g_ptr_array_sort(lst, dl_queue_sort_speed);
 
   if(lst->len < freeslots)
     freeslots = lst->len;
@@ -632,11 +679,6 @@ static gboolean dl_queue_select_do(gpointer dat) {
   int newslots = dl_queue_select_new(freeslots);
   if(DL_BRPS_NAIVE ? newslots == freeslots : newslots > 0)
     dl_queue_select_brps(newslots);
-
-  // TODO: In the naive implementation, users with (!du->selected &&
-  // du->active) should be disconnected here.
-  // In the improved implementation, some users need to be disconnected here,
-  // too, if we are downloading from more users than what has been selected.
 
   dl_queue_sync();
   if(dat)
