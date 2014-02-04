@@ -168,7 +168,7 @@ struct dl_t {
 #define DL_RECONNTIMEOUT 10
 
 // Switch between naive or improved BRPS implementation
-#define DL_BRPS_NAIVE 1
+#define DL_BRPS_NAIVE 0
 
 
 // Download queue.
@@ -628,9 +628,6 @@ static void dl_queue_select_brps(int freeslots) {
   GHashTableIter iter;
   GPtrArray *lst = g_ptr_array_new();
 
-  // TODO: Add a small probability to all targeted source peers, to ensure that
-  // every peer as a non-zero connection probability.
-
   // TODO: If there are less candidate users in the queue than our number of
   // download slots, we could add some users with backoff_periods>0 to the list
   // of candidates. If we do that, however, we need to be careful not to
@@ -657,11 +654,20 @@ static void dl_queue_select_brps(int freeslots) {
   invcomp = 1.0 / (comp - 1.0);
   dl_queue_select_brps_consts(lst, freeslots, comp, invcomp, &K, &sum);
 
+  // Uniformly distribute half a slot to all source peers regardless of their
+  // calculated probabilities. This is done to give all source peers a chance,
+  // even if they would otherwise get a connection probability of zero. Fully
+  // excluding peers from getting selected prevents any possible evaluation of
+  // their speeds and may get us stuck on slow peers.
+  double dist_factor = ((double)freeslots-0.5)/(double)freeslots;
+  double dist_add = ((1.0 - dist_factor) * (double)freeslots) / (double)lst->len;
+
   sum = (double)(K - freeslots) / sum;
   g_debug("BRPS: |D| = %.1f  K = %d  L = %d  |S| = %d", comp, K, freeslots, (int)lst->len);
   for(i=0; i<lst->len; i++) {
     dl_user_t *du = lst->pdata[i];
     double p = i >= K ? 0.0 : 1.0 - (sum * pow(1.0 / du->avg_speed, invcomp));
+    p = (p * dist_factor) + dist_add;
     if(p > g_random_double())
       dl_queue_select_select(du);
     g_debug("BRPS: %016"G_GINT64_MODIFIER"x  c = %.1f  p = %.3f%s", du->uid, du->avg_speed, p, du->selected ? " (selected)" : "");
