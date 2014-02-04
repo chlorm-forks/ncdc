@@ -261,11 +261,11 @@ static gint dl_queue_sort_speed(gconstpointer a, gconstpointer b) {
 // <download_slots> iterations.
 // Returns NULL if there is no dl item in the queue that is enabled and not
 // being downloaded.
-static dl_user_dl_t *dl_user_getdl(const dl_user_t *du) {
+static dl_user_dl_t *dl_user_getdl(const dl_user_t *du, gboolean needchunk) {
   GSequenceIter *i = g_sequence_get_begin_iter(du->queue);
   for(; !g_sequence_iter_is_end(i); i=g_sequence_iter_next(i)) {
     dl_user_dl_t *dud = g_sequence_get(i);
-    if(dl_user_dl_enabled(dud) && !dud->dl->allbusy)
+    if(dl_user_dl_enabled(dud) && (!needchunk || !dud->dl->allbusy))
       return dud;
   }
   return NULL;
@@ -417,7 +417,7 @@ static gboolean dl_queue_sync_defer; // whether a new sync is queued
 
 
 static void dl_queue_sync_reqdl(dl_user_t *du) {
-  dl_user_dl_t *dud = dl_user_getdl(du);
+  dl_user_dl_t *dud = dl_user_getdl(du, TRUE);
   // TODO: This should not prevent a download from starting if there is still
   // another user with (!selected && active)
   if(!dud)
@@ -528,13 +528,7 @@ static gboolean dl_queue_select_istarget(dl_user_t *du) {
   if(du->backoff_periods)
     return FALSE;
 
-  // TODO: dl_user_getdl() fails if all files from this user are already being
-  // downloaded. When selecting new peers this shouldn't matter, we'll likely
-  // disconnect the existing users anyway.
-  // (Note that making the dlfile segment allocation smaller will likely
-  // prevent this from being a problem in many cases, but it's not a complete
-  // solution)
-  if(!dl_user_getdl(du))
+  if(!dl_user_getdl(du, FALSE))
     return FALSE;
 
   // User must be online and we must be logged in to the hub.
