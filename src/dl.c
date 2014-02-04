@@ -484,14 +484,14 @@ static gboolean dl_queue_sync_do(gpointer dat) {
   GHashTableIter iter;
   g_hash_table_iter_init(&iter, queue_busy);
   while(g_hash_table_iter_next(&iter, NULL, (gpointer *)&du)) {
-    if(!du->selected)
+    if(DL_BRPS_NAIVE && !du->selected)
       continue;
 
     // Connected but not downloading? Request a new download.
     if(du->state == DLU_IDL)
       dl_queue_sync_reqdl(du);
     // Not even connected? Try a connect.
-    else if(du->state == DLU_NCO)
+    else if(du->selected && du->state == DLU_NCO)
       dl_queue_sync_reqconn(du);
   }
 
