@@ -156,7 +156,7 @@ struct dl_t {
 #define DL_MINBLOCKSIZE (1024*1024)
 
 // This should probably be a setting
-#define DL_PERIODLENGTH 60
+#define DL_PERIODLENGTH 30
 
 // Maximum time that a repeatedly unavailable user will stay in the back-off
 // queue.  Actual time is measured in (1<<DL_MAXBACKOFF)*DL_PERIODLENGTH
@@ -418,9 +418,28 @@ static gboolean dl_queue_sync_defer; // whether a new sync is queued
 
 static void dl_queue_sync_reqdl(dl_user_t *du) {
   dl_user_dl_t *dud = dl_user_getdl(du, TRUE);
-  // TODO: This should not prevent a download from starting if there is still
-  // another user with (!selected && active)
-  if(!dud)
+  // If there is still another user with (!selected && active), disconnect that
+  // user and see if we can take over that chunk.
+  // TODO: This logic is similar to dl_user_getdl(), is it possible to get rid
+  // of that function and merge it with the code below?
+  if(!dud) {
+    GSequenceIter *i = g_sequence_get_begin_iter(du->queue);
+    for(; !dud && !g_sequence_iter_is_end(i); i=g_sequence_iter_next(i)) {
+      dl_user_dl_t *dudi = g_sequence_get(i);
+      if(!dl_user_dl_enabled(dudi) || !dudi->dl->allbusy)
+        continue;
+      dl_user_t *dui;
+      GHashTableIter iter;
+      g_hash_table_iter_init(&iter, queue_busy);
+      while(g_hash_table_iter_next(&iter, NULL, (gpointer *)&dui))
+        if(!dui->selected && dui->active && dui->active->dl == dudi->dl) {
+          cc_disconnect(dui->cc, TRUE);
+          dud = dudi;
+          break;
+        }
+    }
+  }
+  if(!dud || dud->dl->allbusy)
     return;
   dl_t *dl = dud->dl;
   g_debug("dl:%016"G_GINT64_MODIFIER"x: using connection for %s", du->uid, dl->dest);
