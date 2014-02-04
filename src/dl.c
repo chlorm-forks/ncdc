@@ -447,8 +447,8 @@ static void dl_queue_sync_kill() {
   //   are disconnected here.
   // In the improved implementation, only the slowest $n users are
   //   disconnected, where $n = $active_users - $selected_users.
-  int i, numsel = 0;
-  GPtrArray *lst = DL_BRPS_NAIVE ? g_ptr_array_new() : NULL;
+  int i, numsel = 0, numactive = 0;
+  GPtrArray *lst = DL_BRPS_NAIVE ? NULL : g_ptr_array_new();
 
   dl_user_t *du;
   GHashTableIter iter;
@@ -460,21 +460,24 @@ static void dl_queue_sync_kill() {
     }
     if(!DL_BRPS_NAIVE && du->selected)
       numsel++;
-    if(!DL_BRPS_NAIVE && !du->selected && du->cc)
+    if(!DL_BRPS_NAIVE && du->active)
+      numactive++;
+    if(!DL_BRPS_NAIVE && !du->selected && du->active)
       g_ptr_array_add(lst, du);
   }
 
-  if(lst && lst->len > numsel) {
+  g_debug("dl_queue_sync_kill(): %d selected, %d active, %d not selected but active", numsel, numactive, (int)lst->len);
+  if(lst && numactive > numsel) {
     g_ptr_array_sort(lst, dl_queue_sort_speed);
-    // Slowest sorted last, so disconnect from the bottom
-    for(i=lst->len-1; i>=numsel; i--) {
+    // Slowest sorted last, so disconnect last users
+    for(i=lst->len - (numactive-numsel); i<lst->len; i++) {
       dl_user_t *du = lst->pdata[i];
       cc_disconnect(du->cc, TRUE);
       du->active = NULL;
     }
   }
 
-  if(DL_BRPS_NAIVE)
+  if(!DL_BRPS_NAIVE)
     g_ptr_array_unref(lst);
 }
 
