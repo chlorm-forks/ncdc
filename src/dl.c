@@ -283,8 +283,8 @@ static void dl_user_setstate(dl_user_t *du, int state) {
   else if(state >= 0 && du->state == DLU_WAI && state != DLU_WAI)
     g_source_remove(du->timeout);
 
-  // ACT -> x
-  if(state >= 0 && du->state == DLU_ACT && state != DLU_ACT && du->active)
+  // (ACT|REQ) -> x
+  if(state >= 0 && (du->state == DLU_ACT || du->state == DLU_REQ) && !(state == DLU_ACT || state == DLU_REQ) && du->active)
     du->active = NULL;
 
   // Set state
@@ -292,7 +292,7 @@ static void dl_user_setstate(dl_user_t *du, int state) {
   if(state >= 0)
     du->state = state;
 
-  if(!du->selected && state != DLU_ACT)
+  if(!du->selected && !du->active)
     g_hash_table_remove(queue_busy, &du->uid);
 
   if(state == DLU_ACT)
@@ -300,6 +300,7 @@ static void dl_user_setstate(dl_user_t *du, int state) {
 
   // Check whether there is any value in keeping this dl_user struct in memory
   if(du->state == DLU_NCO && !g_sequence_get_length(du->queue)) {
+    g_hash_table_remove(queue_busy, &du->uid);
     g_hash_table_remove(queue_users, &du->uid);
     g_sequence_free(du->queue);
     g_slice_free(dl_user_t, du);
@@ -393,10 +394,8 @@ static void dl_user_rm(dl_t *dl, int i) {
 
   // Make sure to disconnect the user if we happened to be actively downloading
   // the file from this user.
-  if(du->active == dud) {
+  if(du->active == dud)
     cc_disconnect(du->cc, TRUE);
-    du->active = NULL;
-  }
 
   uit_dl_dud_listchange(dud, UITDL_DEL);
   g_sequence_remove(dudi); // dl_user_dl_free() will be called implicitly
@@ -422,17 +421,19 @@ static void dl_queue_sync_reqdl(dl_user_t *du) {
   // user and see if we can take over that chunk.
   // TODO: This logic is similar to dl_user_getdl(), is it possible to get rid
   // of that function and merge it with the code below?
-  if(!dud) {
+  if(!dud && du->selected) {
     GSequenceIter *i = g_sequence_get_begin_iter(du->queue);
     for(; !dud && !g_sequence_iter_is_end(i); i=g_sequence_iter_next(i)) {
       dl_user_dl_t *dudi = g_sequence_get(i);
       if(!dl_user_dl_enabled(dudi) || !dudi->dl->allbusy)
         continue;
+
       dl_user_t *dui;
       GHashTableIter iter;
       g_hash_table_iter_init(&iter, queue_busy);
       while(g_hash_table_iter_next(&iter, NULL, (gpointer *)&dui))
         if(!dui->selected && dui->active && dui->active->dl == dudi->dl) {
+          g_debug("dl: Disconnecting %016"G_GINT64_MODIFIER"x to free a chunk for %016"G_GINT64_MODIFIER"x", dui->uid, du->uid);
           cc_disconnect(dui->cc, TRUE);
           dud = dudi;
           break;
@@ -467,41 +468,43 @@ static void dl_queue_sync_kill() {
   // In the improved implementation, only the slowest $n users are
   //   disconnected, where $n = $active_users - $selected_users.
   int i, numsel = 0, numactive = 0;
-  GPtrArray *lst = DL_BRPS_NAIVE ? NULL : g_ptr_array_new();
+  GPtrArray *lst = g_ptr_array_new();
 
   dl_user_t *du;
   GHashTableIter iter;
   g_hash_table_iter_init(&iter, queue_busy);
   while(g_hash_table_iter_next(&iter, NULL, (gpointer *)&du)) {
-    if(DL_BRPS_NAIVE && !du->selected && du->cc) {
-      cc_disconnect(du->cc, TRUE);
-      du->active = NULL;
-    }
+    if(DL_BRPS_NAIVE && !du->selected && du->cc)
+      g_ptr_array_add(lst, du);
     if(!DL_BRPS_NAIVE && du->selected)
       numsel++;
-    if(!DL_BRPS_NAIVE && du->active)
+    if(!DL_BRPS_NAIVE && du->state == DLU_ACT)
       numactive++;
-    if(!DL_BRPS_NAIVE && !du->selected && du->active)
+    if(!DL_BRPS_NAIVE && !du->selected && du->state == DLU_ACT)
       g_ptr_array_add(lst, du);
   }
 
   g_debug("dl_queue_sync_kill(): %d selected, %d active, %d not selected but active", numsel, numactive, (int)lst->len);
-  if(lst && numactive > numsel) {
+  if(DL_BRPS_NAIVE || (lst && numactive > numsel)) {
     g_ptr_array_sort(lst, dl_queue_sort_speed);
     // Slowest sorted last, so disconnect last users
-    for(i=lst->len - (numactive-numsel); i<lst->len; i++) {
+    for(i=DL_BRPS_NAIVE ? 0 : lst->len - (numactive-numsel); i<lst->len; i++) {
       dl_user_t *du = lst->pdata[i];
       cc_disconnect(du->cc, TRUE);
-      du->active = NULL;
     }
   }
 
-  if(!DL_BRPS_NAIVE)
-    g_ptr_array_unref(lst);
+  g_ptr_array_unref(lst);
 }
 
 
 static gboolean dl_queue_sync_do(gpointer dat) {
+  // List of users we need to call _reqdl() on. This isn't done in the hash
+  // table iteration loop because _reqdl() may call cc_disconnect() and cause
+  // the queue_busy table to be modified during iteration.
+  GPtrArray *lst = g_ptr_array_new();
+  int i;
+
   dl_user_t *du;
   GHashTableIter iter;
   g_hash_table_iter_init(&iter, queue_busy);
@@ -511,11 +514,14 @@ static gboolean dl_queue_sync_do(gpointer dat) {
 
     // Connected but not downloading? Request a new download.
     if(du->state == DLU_IDL)
-      dl_queue_sync_reqdl(du);
+      g_ptr_array_add(lst, du);
     // Not even connected? Try a connect.
     else if(du->selected && du->state == DLU_NCO)
       dl_queue_sync_reqconn(du);
   }
+
+  for(i=0; i<lst->len; i++)
+    dl_queue_sync_reqdl(lst->pdata[i]);
 
   // Disconnect excessive download connections.
   // As an optimization, in the naive implementation this only has to be done
