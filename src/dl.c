@@ -56,6 +56,7 @@ struct dl_user_t {
   float avg_speed;
   float avg_ulslots;
   gboolean selected : 1;
+  gboolean tried : 1;
   // Back-off timer. 'failures' is increased by one (up to DL_MAXBACKOFF) when
   // a user is selected and reset to 0 when in the ACT state. 'periods' is set
   // to 2^failures when a user is unselected, and decreased by one at the start
@@ -445,7 +446,7 @@ static void dl_queue_sync_reqdl(dl_user_t *du) {
   dl_t *dl = dud->dl;
   g_debug("dl:%016"G_GINT64_MODIFIER"x: using connection for %s", du->uid, dl->dest);
 
-  // Update state and connect
+  // Update state and request download
   du->active = dud;
   dl_user_setstate(du, DLU_REQ);
   cc_download(du->cc, dl);
@@ -600,18 +601,20 @@ static int dl_queue_select_new(int freeslots) {
   GHashTableIter iter;
   g_hash_table_iter_init(&iter, queue_users);
   while(g_hash_table_iter_next(&iter, NULL, (gpointer *)&du)) {
-    if(du->avg_speed < 0.5 && dl_queue_select_istarget(du)) {
+    if(!du->tried && dl_queue_select_istarget(du)) {
       g_debug("BRPS-NEW: %016"G_GINT64_MODIFIER"x: c = %.1f  sl = %.1f  t = %.1f", du->uid, du->avg_speed, du->avg_ulslots, du->active_time);
       g_ptr_array_add(lst, du);
-    } else if(du->avg_speed < 0.5)
+    } else if(!du->tried)
       g_debug("BRPS-NEW: Ignoring %016"G_GINT64_MODIFIER"x: c = %.1f  sl = %.1f  t = %.1f  b = %d", du->uid, du->avg_speed, du->avg_ulslots, du->active_time, (int)du->backoff_periods);
   }
 
   while(lst->len > 0 && freeslots > 0) {
     int idx = g_random_int_range(0, lst->len);
-    g_debug("BRPS-NEW: Selecting %016"G_GINT64_MODIFIER"x", ((dl_user_t *)lst->pdata[idx])->uid);
-    dl_queue_select_select(lst->pdata[idx]);
+    du = lst->pdata[idx];
+    g_debug("BRPS-NEW: Selecting %016"G_GINT64_MODIFIER"x", du->uid);
+    dl_queue_select_select(du);
     g_ptr_array_remove_index_fast(lst, idx);
+    du->tried = 1;
     freeslots--;
   }
 
