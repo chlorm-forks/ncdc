@@ -293,7 +293,7 @@ static void dl_user_setstate(dl_user_t *du, int state) {
   if(state >= 0)
     du->state = state;
 
-  if(!du->selected && !du->active)
+  if(!du->selected && du->state == DLU_NCO)
     g_hash_table_remove(queue_busy, &du->uid);
 
   if(state == DLU_ACT)
