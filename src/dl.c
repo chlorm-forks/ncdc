@@ -486,13 +486,12 @@ static void dl_queue_sync_kill() {
   }
 
   g_debug("dl_queue_sync_kill(): %d selected, %d active, %d not selected but active", numsel, numactive, (int)lst->len);
-  if(DL_BRPS_NAIVE || (lst && numactive > numsel)) {
-    g_ptr_array_sort(lst, dl_queue_sort_speed);
-    // Slowest sorted last, so disconnect last users
-    for(i=DL_BRPS_NAIVE ? 0 : lst->len - (numactive-numsel); i<lst->len; i++) {
-      dl_user_t *du = lst->pdata[i];
-      cc_disconnect(du->cc, TRUE);
-    }
+  int max = DL_BRPS_NAIVE ? lst->len : numactive-numsel;
+  for(i=0; i<max; i++) {
+    int idx = g_random_int_range(0, lst->len);
+    du = lst->pdata[idx];
+    g_ptr_array_remove_index_fast(lst, idx);
+    cc_disconnect(du->cc, TRUE);
   }
 
   g_ptr_array_unref(lst);
