@@ -28,15 +28,15 @@
 
 MUSL_CROSS_PATH=/opt/cross
 ZLIB_VERSION=1.2.11
-BZIP2_VERSION=1.0.6
-SQLITE_VERSION=3280000
-GMP_VERSION=6.1.2
-NETTLE_VERSION=3.4.1
-IDN_VERSION=2.1.1
-GNUTLS_VERSION=3.6.7
-NCURSES_VERSION=6.1
-GLIB_VERSION=2.60.3
-MAXMIND_VERSION=1.3.2
+BZIP2_VERSION=1.0.8
+SQLITE_VERSION=3320200
+GMP_VERSION=6.2.0
+NETTLE_VERSION=3.6
+IDN_VERSION=2.3.0
+GNUTLS_VERSION=3.6.14
+NCURSES_VERSION=6.2
+GLIB_VERSION=2.64.3
+MAXMIND_VERSION=1.4.2
 
 
 # We don't actually use pkg-config at all. Setting this variable to 'true'
@@ -117,7 +117,7 @@ getzlib() {
 
 
 getbzip2() {
-  fem https://sources.archlinux.org/other/packages/bzip2/ bzip2-$BZIP2_VERSION.tar.gz bzip2
+  fem https://sourceware.org/pub/bzip2/ bzip2-$BZIP2_VERSION.tar.gz bzip2
   prebuild bzip2 || return
   cp -R $srcdir/* .
   make CC=$HOST-gcc AR=$HOST-ar RANLIB=$HOST-ranlib libbz2.a || exit
@@ -129,7 +129,7 @@ getbzip2() {
 
 
 getsqlite() {
-  fem http://sqlite.org/2019/ sqlite-autoconf-$SQLITE_VERSION.tar.gz sqlite
+  fem http://sqlite.org/2020/ sqlite-autoconf-$SQLITE_VERSION.tar.gz sqlite
   prebuild sqlite || return
   $srcdir/configure --prefix=$PREFIX --disable-readline --disable-dynamic-extensions\
     --disable-fts4 --disable-fts5 --disable-json1 --disable-rtree\
@@ -212,7 +212,7 @@ getglib() {
 
   meson setup . $srcdir --cross-file ../../meson-cross-$TARGET.txt --prefix=$PREFIX\
       --localedir=localexxx -Ddefault_library=static\
-      -Dlibmount=false -Dinternal_pcre=true -Dnls=disabled || exit
+      -Dlibmount=disabled -Dinternal_pcre=true -Dnls=disabled -Dc_args="$CFLAGS" -Dcpp_args="$CFLAGS" || exit
   ninja install || exit
   postbuild
 }
