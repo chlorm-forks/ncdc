@@ -1352,7 +1352,7 @@ static void adc_handle(net_t *net, char *msg, int _len) {
 // If port = 0, 'from' is interpreted as a nick. Otherwise, from should be an IP address.
 static void nmdc_search(hub_t *hub, char *from, unsigned short port, int size_m, guint64 size, int type, char *query) {
   int max = port ? 10 : 5;
-  fl_list_t *res[max];
+  fl_list_t *res[10];
   fl_search_t s = {};
   s.filedir = type == 1 ? 3 : type == 8 ? 2 : 1;
   s.ext = search_types[type].exts;
