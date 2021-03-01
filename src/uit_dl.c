@@ -54,7 +54,7 @@ static gint sort_func(gconstpointer da, gconstpointer db, gpointer dat) {
 // Note that we sort on username, uid. But we do not get a notification when a
 // user changes offline/online state, thus don't have the ability to keep the
 // list sorted reliably. This isn't a huge problem, though, the list is
-// removed/recreated every time an other dl item is selected. This sorting is
+// removed/recreated every time another dl item is selected. This sorting is
 // just better than having the users in completely random order all the time.
 static gint dud_sort_func(gconstpointer da, gconstpointer db, gpointer dat) {
   const dl_user_dl_t *a = da;
@@ -190,7 +190,7 @@ static void dud_draw_row(ui_listing_t *list, GSequenceIter *iter, int row, void 
   else if(dud->u->active == dud)
     mvaddstr(row, 36, "Downloading.");
   else if(dud->u->state == DLU_ACT)
-    mvaddstr(row, 36, "Downloading an other file.");
+    mvaddstr(row, 36, "Downloading another file.");
   else if(dud->u->state == DLU_EXP)
     mvaddstr(row, 36, "Connecting.");
   else
