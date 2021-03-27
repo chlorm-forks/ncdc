@@ -742,12 +742,14 @@ static char *p_sendfile(const char *val, GError **err) {
 #define VAR_TLSP_DISABLE 1
 #define VAR_TLSP_ALLOW   2
 #define VAR_TLSP_PREFER  4
+#define VAR_TLSP_FORCE   8
 #endif
 
 static flag_option_t var_tls_policy_ops[] = {
   { VAR_TLSP_DISABLE, "disabled" },
   { VAR_TLSP_ALLOW,   "allow"    },
   { VAR_TLSP_PREFER,  "prefer"   },
+  { VAR_TLSP_FORCE,   "force"    },
   { 0 }
 };
 

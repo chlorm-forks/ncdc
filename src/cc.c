@@ -828,6 +828,20 @@ static void handle_id(cc_t *cc, hub_user_t *u) {
     return;
   }
 
+  // Because tls_policy is a hub-local setting, we can only verify TLS settings
+  // for incoming connections once we know from which hub this connection came.
+  // The check is perhaps a bit late, but better disconnect late than never.
+  if(cc->tls && var_get_int(cc->hub->id, VAR_tls_policy) == VAR_TLSP_DISABLE) {
+    g_set_error_literal(&(cc->err), 1, 0, "TLS connection");
+    cc_disconnect(cc, FALSE);
+    return;
+  }
+  if(!cc->tls && var_get_int(cc->hub->id, VAR_tls_policy) == VAR_TLSP_FORCE) {
+    g_set_error_literal(&(cc->err), 1, 0, "non-TLS connection");
+    cc_disconnect(cc, FALSE);
+    return;
+  }
+
   cc->slot_granted = db_users_get(u->hub->id, u->name) & DB_USERFLAG_GRANT ? TRUE : FALSE;
 }
 

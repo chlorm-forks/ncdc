@@ -591,18 +591,17 @@ static const doc_set_t doc_sets[] = {
   " note that, even if you set this to `prefer', encryption is still only used"
   " when the client on the other side of the connection also supports it."
 },
-{ "tls_policy", 1, "<disabled|allow|prefer>",
+{ "tls_policy", 1, "<disabled|allow|prefer|force>",
   "Set the policy for secure client-to-client connections. Setting this to"
   " `disabled' disables TLS support for client connections, but still allows"
   " you to connect to TLS-enabled hubs. `allow' will allow the use of TLS if"
   " the other client requests this, but ncdc itself will not request TLS when"
-  " connecting to others. Setting this to `prefer' tells ncdc to also request"
-  " TLS when connecting to others.\n\n"
+  " connecting to others, `prefer' tells ncdc to request TLS when connecting to"
+  " others. Setting this to 'force' will disallow non-TLS connections and also"
+  " requires that the hub connection itself is TLS.\n\n"
   "The use of TLS for client connections usually results in less optimal"
   " performance when uploading and downloading, but is quite effective at"
-  " avoiding protocol-specific traffic shaping that some ISPs may do. Also note"
-  " that, even if you set this to `prefer', TLS will only be used if the"
-  " connecting party also supports it."
+  " avoiding protocol-specific traffic shaping that some ISPs may do."
 },
 { "tls_priority", 0, "<string>",
   "Set the GnuTLS priority string used for all TLS-enabled connections. See the"

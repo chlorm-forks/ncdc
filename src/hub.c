@@ -567,9 +567,9 @@ void hub_opencc(hub_t *hub, hub_user_t *u) {
     base32_encode_dat(nonce, token, 8);
   }
 
-  guint16 wanttls = var_get_int(hub->id, VAR_tls_policy) == VAR_TLSP_PREFER;
+  int tlspolicy = var_get_int(hub->id, VAR_tls_policy);
   int port = listen_hub_tcp(hub->id);
-  gboolean usetls = wanttls && u->hastls;
+  gboolean usetls = tlspolicy == VAR_TLSP_FORCE || (tlspolicy == VAR_TLSP_PREFER && u->hastls);
   char *adcproto = !usetls ? "ADC/1.0" : u->hasadc0 ? "ADCS/0.10" : "ADCS/1.0";
 
   // we're active, send CTM
@@ -1059,7 +1059,7 @@ static void adc_sch(hub_t *hub, adc_cmd_t *cmd) {
 // Many ways to say the same thing
 #define is_adcs_proto(p)  (strcmp(p, "ADCS/1.0") == 0 || strcmp(p, "ADCS/0.10") == 0 || strcmp(p, "ADC0/0.10") == 0)
 #define is_adc_proto(p)   (strcmp(p, "ADC/1.0") == 0  || strcmp(p, "ADC/0.10") == 0)
-#define is_valid_proto(p) (is_adc_proto(p) || is_adcs_proto(p))
+#define is_valid_proto(pol, p) ((pol) == VAR_TLSP_DISABLE ? is_adc_proto(p) : (pol) == VAR_TLSP_FORCE ? is_adcs_proto(p) : is_adc_proto(p) || is_adcs_proto(p))
 
 static void adc_handle(net_t *net, char *msg, int _len) {
   hub_t *hub = net_handle(net);
@@ -1197,7 +1197,7 @@ static void adc_handle(net_t *net, char *msg, int _len) {
   case ADCC_CTM:
     if(cmd.argc < 3 || cmd.type != 'D' || cmd.dest != hub->sid)
       g_message("Invalid message from %s: %s", net_remoteaddr(hub->net), msg);
-    else if(var_get_int(hub->id, VAR_tls_policy) == VAR_TLSP_DISABLE ? !is_adc_proto(cmd.argv[0]) : !is_valid_proto(cmd.argv[0])) {
+    else if(!is_valid_proto(var_get_int(hub->id, VAR_tls_policy), cmd.argv[0])) {
       GString *r = adc_generate('D', ADCC_STA, hub->sid, cmd.source);
       g_string_append(r, " 141 Unknown\\sprotocol");
       adc_append(r, "PR", cmd.argv[0]);
@@ -1226,7 +1226,7 @@ static void adc_handle(net_t *net, char *msg, int _len) {
   case ADCC_RCM:
     if(cmd.argc < 2 || cmd.type != 'D' || cmd.dest != hub->sid)
       g_message("Invalid message from %s: %s", net_remoteaddr(hub->net), msg);
-    else if(var_get_int(hub->id, VAR_tls_policy) == VAR_TLSP_DISABLE ? !is_adc_proto(cmd.argv[0]) : !is_valid_proto(cmd.argv[0])) {
+    else if(!is_valid_proto(var_get_int(hub->id, VAR_tls_policy), cmd.argv[0])) {
       GString *r = adc_generate('D', ADCC_STA, hub->sid, cmd.source);
       g_string_append(r, " 141 Unknown\\protocol");
       adc_append(r, "PR", cmd.argv[0]);
@@ -1686,6 +1686,10 @@ static void nmdc_handle(net_t *net, char *cmd, int _len) {
       if(yuri_parse(addr, &uri) != 0 || *uri.scheme || uri.port == 0 ||
           uri.hosttype == YURI_DOMAIN || *uri.path || *uri.query || *uri.fragment)
         g_message("Invalid host:port in $ConnectToMe (%s)", addr);
+      else if(*tls && var_get_int(hub->id, VAR_tls_policy) == VAR_TLSP_DISABLE)
+        g_message("$ConnectToMe from (%s) requires TLS, but TLS has been disabled in our tls_policy", addr);
+      else if(!*tls && var_get_int(hub->id, VAR_tls_policy) == VAR_TLSP_FORCE)
+        g_message("$ConnectToMe from (%s) without TLS, but TLS is required according to our tls_policy", addr);
       else
         cc_nmdc_connect(cc_create(hub), uri.host, uri.port, var_get(hub->id, VAR_local_address), *tls ? TRUE : FALSE);
     }
@@ -1704,11 +1708,13 @@ static void nmdc_handle(net_t *net, char *cmd, int _len) {
       g_message("Received a $RevConnectToMe for someone else (to %s from %s)", me, other);
     else if(!u)
       g_message("Received a $RevConnectToMe from someone not on the hub.");
+    else if(!u->hastls && var_get_int(hub->id, VAR_tls_policy) == VAR_TLSP_FORCE)
+      g_message("Received a $RevConnectToMe from client that does not support TLS.");
     else if(listen_hub_active(hub->id)) {
       // Unlike with ADC, the client sending the $RCTM can not indicate it
       // wants to use TLS or not, so the decision is with us. Let's require
-      // tls_policy to be PREFER here.
-      int usetls = u->hastls && var_get_int(hub->id, VAR_tls_policy) == VAR_TLSP_PREFER;
+      // tls_policy to be PREFER or FORCE here.
+      int usetls = u->hastls && (var_get_int(hub->id, VAR_tls_policy) & (VAR_TLSP_PREFER|VAR_TLSP_FORCE));
       int port = listen_hub_tcp(hub->id);
       net_writef(hub->net, net_is_ipv6(hub->net) ? "$ConnectToMe %s [%s]:%d%s|" : "$ConnectToMe %s %s:%d%s|",
           other, hub_ip(hub), port, usetls ? "S" : "");
@@ -1952,6 +1958,12 @@ void hub_connect(hub_t *hub) {
     addr.port = 411;
   hub->adc = strncmp(addr.scheme, "adc", 3) == 0;
   hub->tls = strcmp(addr.scheme, "adcs") == 0 || strcmp(addr.scheme, "nmdcs") == 0;
+
+  if(!hub->tls && var_get_int(hub->id, VAR_tls_policy) == VAR_TLSP_FORCE) {
+    ui_mf(hub->tab, 0, "Refusing to connect to %s; tls_priority is set to 'force' but this is not a TLS address.", oaddr);
+    free(addr.buf);
+    return;
+  }
 
   if(hub->reconnect_timer) {
     g_source_remove(hub->reconnect_timer);
