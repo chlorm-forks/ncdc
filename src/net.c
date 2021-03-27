@@ -240,7 +240,7 @@ static int low_send(net_t *n, const char *buf, int len, const char **err) {
 static void asy_setuppoll(net_t *n);
 
 struct synfer_t {
-  GStaticMutex lock; // protects n->left, any data used within the low_* functions and, in the case of a disconnect, net->sock and net->tls.
+  GMutex lock; // protects n->left, any data used within the low_* functions and, in the case of a disconnect, net->sock and net->tls.
   net_t *net;
   guint64 left; // The transfer thread itself does not need the lock to read this value, only to write. (It is the only writer)
   int fd;     // for uploads
@@ -264,7 +264,7 @@ static void syn_new(net_t *n, gboolean upl, guint64 len) {
   n->syn->net = n;
   n->syn->upl = upl;
 
-  g_static_mutex_init(&n->syn->lock);
+  g_mutex_init(&n->syn->lock);
   if(pipe(n->syn->can) < 0) {
     g_critical("pipe() failed: %s", g_strerror(errno));
     g_return_if_reached();
@@ -333,13 +333,13 @@ static gboolean syn_done(gpointer dat) {
 // success, 0 if the operation has been cancelled.
 static int syn_wait(synfer_t *s, int sock, gboolean write) {
   // Lock to get the socket fd
-  g_static_mutex_lock(&s->lock);
+  g_mutex_lock(&s->lock);
   GPollFD fds[2] = {};
   fds[0].fd = s->can[0];
   fds[0].events = G_IO_IN;
   fds[1].fd = sock;
   fds[1].events = write ? G_IO_OUT : G_IO_IN;
-  g_static_mutex_unlock(&s->lock);
+  g_mutex_unlock(&s->lock);
 
   // Poll for burst
   int b = 0;
@@ -405,10 +405,10 @@ static void syn_upload_sendfile(synfer_t *s, int sock, fadv_t *adv) {
       // ratecalc thing and update timeout_last.
       ratecalc_add(&net_out, r);
       ratecalc_add(&s->net->rate_out, r);
-      g_static_mutex_lock(&s->lock);
+      g_mutex_lock(&s->lock);
       time(&s->net->timeout_last);
       s->left -= r;
-      g_static_mutex_unlock(&s->lock);
+      g_mutex_unlock(&s->lock);
       continue;
     } else if(errno == EAGAIN || errno == EINTR) {
       continue;
@@ -452,7 +452,7 @@ static void syn_upload_buf(synfer_t *s, int sock, fadv_t *adv) {
       if(b <= 0)
         goto done;
 
-      g_static_mutex_lock(&s->lock);
+      g_mutex_lock(&s->lock);
       const char *err = NULL;
       int wr = s->cancel || !s->net->sock ? 0 : low_send(s->net, p, MIN(rd, b), &err);
       // successful write
@@ -461,7 +461,7 @@ static void syn_upload_buf(synfer_t *s, int sock, fadv_t *adv) {
         s->left -= wr;
         rd -= wr;
       }
-      g_static_mutex_unlock(&s->lock);
+      g_mutex_unlock(&s->lock);
 
       if(!wr) // cancelled
         goto done;
@@ -487,12 +487,12 @@ static void syn_download(synfer_t *s, int sock) {
     if(b <= 0)
       break;
 
-    g_static_mutex_lock(&s->lock);
+    g_mutex_lock(&s->lock);
     const char *err = NULL;
     int r = s->cancel || !s->net->sock ? 0 : low_recv(s->net, buf, MIN(NET_TRANS_BUF, s->left), &err);
     if(r > 0)
       s->left -= r;
-    g_static_mutex_unlock(&s->lock);
+    g_mutex_unlock(&s->lock);
 
     if(!r)
       break;
@@ -518,10 +518,10 @@ static void syn_thread(gpointer dat, gpointer udat) {
 
   // Make a copy of sock to make sure it doesn't disappear on us.
   // (Still need to obtain the lock to make use of it).
-  g_static_mutex_lock(&s->lock);
+  g_mutex_lock(&s->lock);
   int sock = s->net->sock;
   gboolean tls = !!s->net->tls;
-  g_static_mutex_unlock(&s->lock);
+  g_mutex_unlock(&s->lock);
 
   if(sock && !s->cancel && s->upl) {
     fadv_t adv;
@@ -560,9 +560,9 @@ static void syn_start(net_t *n) {
 guint64 net_left(net_t *n) {
   if(!n->syn)
     return 0;
-  g_static_mutex_lock(&n->syn->lock);
+  g_mutex_lock(&n->syn->lock);
   guint64 r = n->syn->left;
-  g_static_mutex_unlock(&n->syn->lock);
+  g_mutex_unlock(&n->syn->lock);
   return r;
 }
 
@@ -1238,10 +1238,10 @@ static void dnscon_thread(gpointer dat, gpointer udat) {
 
 time_t net_last_activity(net_t *n) {
   if(n->syn)
-    g_static_mutex_lock(&n->syn->lock);
+    g_mutex_lock(&n->syn->lock);
   time_t last = n->timeout_last;
   if(n->syn)
-    g_static_mutex_unlock(&n->syn->lock);
+    g_mutex_unlock(&n->syn->lock);
   return last;
 }
 
@@ -1370,7 +1370,7 @@ void net_disconnect(net_t *n) {
   // If we're in the SYN state, then the socket and tls session are in control
   // of the file transfer thread. Hence the need for the conditional locks.
   if(s)
-    g_static_mutex_lock(&s->lock);
+    g_mutex_lock(&s->lock);
   if(n->tls) {
     gnutls_deinit(n->tls);
     n->tls = NULL;
@@ -1381,7 +1381,7 @@ void net_disconnect(net_t *n) {
   }
   time(&n->timeout_last);
   if(s)
-    g_static_mutex_unlock(&s->lock);
+    g_mutex_unlock(&s->lock);
 
   if(n->rbuf) {
     g_string_free(n->rbuf, TRUE);

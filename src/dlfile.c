@@ -119,7 +119,7 @@ static gboolean dlfile_save_bitmap(dl_t *dl, int fd) {
 
 static gboolean dlfile_save_bitmap_timeout(gpointer dat) {
   dl_t *dl = dat;
-  g_static_mutex_lock(&dl->lock);
+  g_mutex_lock(&dl->lock);
   dl->bitmap_src = 0;
   if(dl->incfd > 0 && !dlfile_save_bitmap(dl, dl->incfd)) {
     g_warning("Error writing bitmap for `%s': %s.", dl->dest, g_strerror(errno));
@@ -129,7 +129,7 @@ static gboolean dlfile_save_bitmap_timeout(gpointer dat) {
     close(dl->incfd);
     dl->incfd = 0;
   }
-  g_static_mutex_unlock(&dl->lock);
+  g_mutex_unlock(&dl->lock);
   return FALSE;
 }
 
@@ -483,7 +483,7 @@ dlfile_thread_t *dlfile_getchunk(dl_t *dl, guint64 uid, guint64 speed) {
   dlfile_thread_t *tsec = NULL;
   GSList *l;
 
-  g_static_mutex_lock(&dl->lock);
+  g_mutex_lock(&dl->lock);
   dlfile_threaddump(dl, 1);
   for(l=dl->threads; l; l=l->next) {
     dlfile_thread_t *ti = l->data;
@@ -531,7 +531,7 @@ dlfile_thread_t *dlfile_getchunk(dl_t *dl, guint64 uid, guint64 speed) {
   dl->allbusy = !l;
 
   dlfile_threaddump(dl, 2);
-  g_static_mutex_unlock(&dl->lock);
+  g_mutex_unlock(&dl->lock);
   g_debug("Allocating: allbusy = %d, chunk = %u, allocated = %u, avail = %u, chunksinblock = %u, chunksinfile = %u",
       dl->allbusy, t->chunk, t->allocated, t->avail, (guint32)dl->hash_block/DLFILE_CHUNKSIZE, dlfile_chunks(dl->size));
   return t;
@@ -543,7 +543,7 @@ static gboolean dlfile_recv_check(dlfile_thread_t *t, char *leaf) {
   if(t->dl->size < t->dl->hash_block ? memcmp(leaf, t->dl->hash, 24) == 0 : db_dl_checkhash(t->dl->hash, num, leaf))
     return TRUE;
 
-  g_static_mutex_lock(&t->dl->lock);
+  g_mutex_lock(&t->dl->lock);
 
   /* Hash failure, remove the failed block from the bitmap and dl->have, and
    * reset this thread so that the block can be re-downloaded. */
@@ -560,7 +560,7 @@ static gboolean dlfile_recv_check(dlfile_thread_t *t, char *leaf) {
     bita_set(t->dl->bitmap, i);
   dlfile_save_bitmap_defer(t->dl);
 
-  g_static_mutex_unlock(&t->dl->lock);
+  g_mutex_unlock(&t->dl->lock);
 
   t->uerr = DLE_HASH;
   t->uerr_msg = g_strdup_printf("Hash for block %u (chunk %u-%u) does not match.", num, startchunk, startchunk+chunksinblock);
@@ -609,11 +609,11 @@ gboolean dlfile_recv(void *vt, const char *buf, int len) {
     buf += inchunk;
     len -= inchunk;
 
-    g_static_mutex_lock(&t->dl->lock);
+    g_mutex_lock(&t->dl->lock);
     t->dl->have += inchunk;
 
     if(!islast && t->len < DLFILE_CHUNKSIZE) {
-      g_static_mutex_unlock(&t->dl->lock);
+      g_mutex_unlock(&t->dl->lock);
       continue;
     }
 
@@ -625,7 +625,7 @@ gboolean dlfile_recv(void *vt, const char *buf, int len) {
     t->allocated--;
     t->avail--;
     t->len = 0;
-    g_static_mutex_unlock(&t->dl->lock);
+    g_mutex_unlock(&t->dl->lock);
 
     if(!t->dl->islist && (islast || t->chunk % (t->dl->hash_block / DLFILE_CHUNKSIZE) == 0)) {
       char leaf[24];

@@ -128,7 +128,7 @@ struct dl_t {
    * downloading thread is active and thus do not need synchronisation.  These
    * include dl_t.{size,islist,hash,hash_block,incfd} and possibly more.
    * TODO: dl.have isn't always protected yet! */
-  GStaticMutex lock;
+  GMutex lock;
 };
 
 #endif
@@ -537,7 +537,7 @@ void dl_queue_addlist(hub_user_t *u, const char *sel, ui_tab_t *parent, gboolean
   g_return_if_fail(u && u->hasinfo);
   dl_t *dl = g_slice_new0(dl_t);
   dl->islist = TRUE;
-  g_static_mutex_init(&dl->lock);
+  g_mutex_init(&dl->lock);
   if(sel)
     dl->flsel = g_strdup(sel);
   dl->flpar = parent;
@@ -576,7 +576,7 @@ static gboolean dl_queue_addfile(guint64 uid, char *hash, guint64 size, char *fn
   if(g_hash_table_lookup(dl_queue, hash))
     return FALSE;
   dl_t *dl = g_slice_new0(dl_t);
-  g_static_mutex_init(&dl->lock);
+  g_mutex_init(&dl->lock);
   memcpy(dl->hash, hash, 24);
   dl->size = size;
   // Figure out dl->dest
@@ -924,7 +924,7 @@ void dl_load_dl(const char *tth, guint64 size, const char *dest, signed char pri
   g_return_if_fail(dest);
 
   dl_t *dl = g_slice_new0(dl_t);
-  g_static_mutex_init(&dl->lock);
+  g_mutex_init(&dl->lock);
   memcpy(dl->hash, tth, 24);
   dl->size = size;
   dl->prio = prio;

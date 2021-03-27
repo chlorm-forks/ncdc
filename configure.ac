@@ -121,7 +121,7 @@ PKG_CHECK_EXISTS([sqlite3],[
 )
 
 # Check for modules
-PKG_CHECK_MODULES([GLIB],   [glib-2.0 >= 2.24 gthread-2.0])
+PKG_CHECK_MODULES([GLIB],   [glib-2.0 >= 2.32 gthread-2.0])
 PKG_CHECK_MODULES([GNUTLS], [gnutls >= 3.0])
 AC_ARG_WITH([geoip],
             [AS_HELP_STRING([--with-geoip], [support for IP-to-country lookups @<:@default=no@:>@])],
