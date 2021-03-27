@@ -1472,7 +1472,7 @@ static void nmdc_handle(net_t *net, char *cmd, int _len) {
   if(g_regex_match(lock, cmd, 0, &nfo)) { // 1 = lock
     char *lock = g_match_info_fetch(nfo, 1);
     if(strncmp(lock, "EXTENDEDPROTOCOL", 16) == 0)
-      net_writestr(hub->net, "$Supports NoGetINFO NoHello UserIP2|");
+      net_writestr(hub->net, "$Supports NoGetINFO NoHello UserIP2 TLS|");
     char *key = nmdc_lock2key(lock);
     net_writef(hub->net, "$Key %s|", key);
     hub->nick = g_strdup(var_get(hub->id, VAR_nick));
