@@ -386,7 +386,7 @@ static char *i_cid_pid() {
 
   // Generate a random PID
   char pid[24];
-  crypt_rnd(pid, 24);
+  g_warn_if_fail(gnutls_rnd(GNUTLS_RND_RANDOM, pid, 24) == 0);
 
   // now hash the PID so we have our CID
   char cid[24];

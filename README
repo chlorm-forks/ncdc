@@ -19,10 +19,8 @@ REQUIREMENTS
   bzip2
   sqlite  >= 3.3.9
   glib    >= 2.24.0
-  gnutls  >= 2.4.0
+  gnutls  >= 3.0
   libmaxminddb (optional)
-
-  If your gnutls is older than 3.0, you also need libgcrypt.
 
 
 

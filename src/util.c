@@ -101,6 +101,21 @@ void certificate_sha256(gnutls_datum_t cert, char *digest) {
 }
 
 
+// Simple single-pass in-place AES-128-CBC encryption using a 16-byte zero'd IV.
+void crypt_aes128cbc(gboolean encrypt, const char *key, size_t keylen, char *data, size_t len) {
+  gnutls_cipher_hd_t ciph;
+  char iv[16] = {};
+  gnutls_datum_t ivd = { (unsigned char *)iv, 16 };
+  gnutls_datum_t keyd = { (unsigned char *)key, keylen };
+  gnutls_cipher_init(&ciph, GNUTLS_CIPHER_AES_128_CBC, &keyd, &ivd);
+  if(encrypt)
+    g_warn_if_fail(gnutls_cipher_encrypt(ciph, data, len) == 0);
+  else
+    g_warn_if_fail(gnutls_cipher_decrypt(ciph, data, len) == 0);
+  gnutls_cipher_deinit(ciph);
+}
+
+
 // strftime()-like formatting for localtime. The returned string should be
 // g_free()'d. This function assumes that the resulting string always contains
 // at least one character.

@@ -563,7 +563,7 @@ void hub_opencc(hub_t *hub, hub_user_t *u) {
   char token[14] = {};
   if(hub->adc) {
     char nonce[8];
-    crypt_nonce(nonce, 8);
+    g_warn_if_fail(gnutls_rnd(GNUTLS_RND_NONCE, nonce, 8) == 0);
     base32_encode_dat(nonce, token, 8);
   }
 
@@ -909,7 +909,7 @@ static void adc_sch_reply_send(hub_t *hub, net_udp_t *udp, GString *r, const cha
 
   // prepend 16 random bytes to message
   char nonce[16];
-  crypt_nonce(nonce, 16);
+  g_warn_if_fail(gnutls_rnd(GNUTLS_RND_NONCE, nonce, 16) == 0);
   g_string_prepend_len(r, nonce, 16);
 
   // use PKCS#5 padding to align the message length to the cypher block size (16)
@@ -1845,7 +1845,7 @@ hub_t *hub_create(ui_tab_t *tab) {
   // Get or create the hub id
   hub->id = db_vars_hubid(tab->name);
   if(!hub->id) {
-    crypt_rnd(&hub->id, 8);
+    g_warn_if_fail(gnutls_rnd(GNUTLS_RND_RANDOM, &hub->id, 8) == 0);
     var_set(hub->id, VAR_hubname, tab->name, NULL);
   }
 

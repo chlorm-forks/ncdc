@@ -169,7 +169,7 @@ gboolean search_add(hub_t *hub, search_q_t *q, GError **err) {
   }
 
   if(var_get_int(0, VAR_sudp_policy) == VAR_SUDPP_PREFER)
-    crypt_nonce(q->key, 16);
+    g_warn_if_fail(gnutls_rnd(GNUTLS_RND_NONCE, q->key, 16) == 0);
 
   // Search a single hub
   if(hub) {

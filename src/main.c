@@ -376,29 +376,6 @@ static GOptionEntry cli_options[] = {
 
 
 
-#ifdef USE_GCRYPT
-/* These hacks with static exist to trick makeheaders into not copying the
- * gcrypt macro into the header file. It does cause some of the functions to be
- * exported, but they're pretty unique anyway. */
-#define static
-static GCRY_THREAD_OPTION_PTHREAD_IMPL;
-#undef static
-#endif
-
-static void init_crypt() {
-#ifdef USE_GCRYPT
-  gcry_control(GCRYCTL_SET_THREAD_CBS, &gcry_threads_pthread);
-  if(!gcry_check_version(GCRYPT_VERSION)) {
-    fputs("libgcrypt version mismatch\n", stderr);
-    exit(1);
-  }
-  gcry_control(GCRYCTL_ENABLE_QUICK_RANDOM);
-  gcry_control(GCRYCTL_INITIALIZATION_FINISHED, 0);
-#endif
-  gnutls_global_init();
-}
-
-
 int main(int argc, char **argv) {
   setlocale(LC_ALL, "");
   // Early logging goes to stderr
@@ -423,7 +400,7 @@ int main(int argc, char **argv) {
   }
 
   // init stuff
-  init_crypt();
+  gnutls_global_init();
   g_thread_init(NULL);
 
   // Create main loop
