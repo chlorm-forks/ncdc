@@ -505,7 +505,7 @@ static int fl_hash_burst(guint64 lastreset) {
   int b = 0;
   g_mutex_lock(&fl_hash_resetlock);
   while(fl_hash_reset == lastreset && (b = ratecalc_burst(&fl_hash_rate)) <= 0)
-    g_cond_wait_until(&fl_hash_resetcond, &fl_hash_resetlock, g_get_monotonic_time()* + 100*G_TIME_SPAN_MILLISECOND);
+    g_cond_wait_until(&fl_hash_resetcond, &fl_hash_resetlock, g_get_monotonic_time() + 100*G_TIME_SPAN_MILLISECOND);
   g_mutex_unlock(&fl_hash_resetlock);
   return b;
 }
