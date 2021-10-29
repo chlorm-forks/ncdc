@@ -224,7 +224,7 @@ static void t_draw(ui_tab_t *tab) {
   if(sel) {
     char hash[40] = {};
     base32_encode(sel->hash, hash);
-    mvprintw(bottom, 0, hash);
+    mvaddstr(bottom, 0, hash);
   } else
     mvaddstr(bottom, 0, "Nothing selected.");
   mvprintw(bottom, wincols-19, "%5d files - %3d%%", g_hash_table_size(dl_queue), pos);
