@@ -1960,7 +1960,7 @@ void hub_connect(hub_t *hub) {
   hub->tls = strcmp(addr.scheme, "adcs") == 0 || strcmp(addr.scheme, "nmdcs") == 0;
 
   if(!hub->tls && var_get_int(hub->id, VAR_tls_policy) == VAR_TLSP_FORCE) {
-    ui_mf(hub->tab, 0, "Refusing to connect to %s; tls_priority is set to 'force' but this is not a TLS address.", oaddr);
+    ui_mf(hub->tab, 0, "Refusing to connect to %s; tls_policy is set to 'force' but this is not a TLS address.", oaddr);
     free(addr.buf);
     return;
   }
