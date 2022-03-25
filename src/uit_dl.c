@@ -227,7 +227,7 @@ static void t_draw(ui_tab_t *tab) {
     mvaddstr(bottom, 0, hash);
   } else
     mvaddstr(bottom, 0, "Nothing selected.");
-  mvprintw(bottom, wincols-19, "%5d files - %3d%%", g_hash_table_size(dl_queue), pos);
+  mvprintw(bottom, wincols-19, "%5d file%c - %3d%%", g_hash_table_size(dl_queue), g_hash_table_size(dl_queue) == 1 ? ' ' : 's', pos);
   attroff(UIC(separator));
 
   // error info
