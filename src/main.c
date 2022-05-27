@@ -342,6 +342,7 @@ static gboolean sighandle_sourcefunc(gpointer dat) {
   }
   if(main_sig_log) {
     logfile_global_reopen();
+    geoip_reinit();
     main_sig_log = FALSE;
   }
   return TRUE;
@@ -429,8 +430,7 @@ int main(int argc, char **argv) {
   dl_init_global();
   ui_cmdhist_init("history");
   ui_init(bracketed_paste);
-  geoip_reinit(4);
-  geoip_reinit(6);
+  geoip_reinit();
 
   // setup SIGWINCH
   struct sigaction act;
