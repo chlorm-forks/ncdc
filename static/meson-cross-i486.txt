@@ -3,10 +3,10 @@ c = 'i486-linux-musl-gcc'
 cpp = 'i486-linux-musl-g++'
 ar = 'i486-linux-musl-ar'
 strip = 'i486-linux-musl-strip'
-pkgconfig = 'pkg-config'
+pkgconfig = 'true'
 
 [host_machine]
 system = 'linux'
-cpu_family = 'i486'
+cpu_family = 'x86'
 cpu = 'i486'
 endian = 'little'

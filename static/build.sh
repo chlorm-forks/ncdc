@@ -22,21 +22,21 @@
 #   Where $arch = 'arm', 'aarch64', 'i486' or 'x86_64'
 #
 # TODO:
-# - Cross-compile to platforms other than Linux?
 # - Automatically fetch & build musl-cross?
+# - Alternatively: make this work with Zig.
 
 
 MUSL_CROSS_PATH=/opt/cross
-ZLIB_VERSION=1.2.11
+ZLIB_VERSION=1.2.12
 BZIP2_VERSION=1.0.8
-SQLITE_VERSION=3320200
-GMP_VERSION=6.2.0
-NETTLE_VERSION=3.6
-IDN_VERSION=2.3.0
-GNUTLS_VERSION=3.6.14
-NCURSES_VERSION=6.2
-GLIB_VERSION=2.64.3
-MAXMIND_VERSION=1.4.2
+SQLITE_VERSION=3380500
+GMP_VERSION=6.2.1
+NETTLE_VERSION=3.7.3
+IDN_VERSION=2.3.2
+GNUTLS_VERSION=3.6.16
+NCURSES_VERSION=6.3
+GLIB_VERSION=2.73.0
+MAXMIND_VERSION=1.6.0
 
 
 # We don't actually use pkg-config at all. Setting this variable to 'true'
@@ -106,7 +106,7 @@ postbuild() {
 
 
 getzlib() {
-  fem http://zlib.net/ zlib-$ZLIB_VERSION.tar.gz zlib
+  fem https://zlib.net/ zlib-$ZLIB_VERSION.tar.gz zlib
   prebuild zlib || return
   # zlib doesn't support out-of-source builds
   cp -R $srcdir/* .
@@ -129,10 +129,10 @@ getbzip2() {
 
 
 getsqlite() {
-  fem http://sqlite.org/2020/ sqlite-autoconf-$SQLITE_VERSION.tar.gz sqlite
+  fem https://sqlite.org/2022/ sqlite-autoconf-$SQLITE_VERSION.tar.gz sqlite
   prebuild sqlite || return
   $srcdir/configure --prefix=$PREFIX --disable-readline --disable-dynamic-extensions\
-    --disable-fts4 --disable-fts5 --disable-json1 --disable-rtree\
+    --disable-fts4 --disable-fts5 --disable-rtree\
     --disable-shared --enable-static --host=$HOST || exit
   make install-includeHEADERS install-libLTLIBRARIES || exit
   postbuild
@@ -140,18 +140,18 @@ getsqlite() {
 
 
 getgmp() {
-  fem ftp://ftp.gmplib.org/pub/gmp-$GMP_VERSION/ gmp-$GMP_VERSION.tar.xz gmp
+  fem https://gmplib.org/download/gmp/ gmp-$GMP_VERSION.tar.xz gmp
   prebuild gmp || return
-  $srcdir/configure --host=$HOST --disable-shared --without-readline --enable-static --prefix=$PREFIX || exit
+  $srcdir/configure --host=$HOST --disable-shared --without-readline --enable-static --with-pic --prefix=$PREFIX || exit
   make install || exit
   postbuild
 }
 
 
 getnettle() {
-  fem http://www.lysator.liu.se/~nisse/archive/ nettle-$NETTLE_VERSION.tar.gz nettle
+  fem https://ftp.gnu.org/gnu/nettle/ nettle-$NETTLE_VERSION.tar.gz nettle
   prebuild nettle || return
-  $srcdir/configure --prefix=$PREFIX --enable-public-key --disable-shared --host=$HOST\
+  $srcdir/configure --prefix=$PREFIX --enable-public-key --disable-shared --disable-static-pie --host=$HOST\
     CPPFLAGS="-I$PREFIX/include" LDFLAGS="-L$PREFIX/lib" || exit
   make install-headers install-static || exit
   postbuild
@@ -159,7 +159,7 @@ getnettle() {
 
 
 getidn() {
-  fem http://ftp.gnu.org/gnu/libidn/ libidn2-$IDN_VERSION.tar.gz idn
+  fem https://ftp.gnu.org/gnu/libidn/ libidn2-$IDN_VERSION.tar.gz idn
   prebuild idn || return
   $srcdir/configure --prefix=$PREFIX --disable-nls --disable-valgrind-tests --disable-shared\
     --enable-static --host=$HOST CPPFLAGS="-I$PREFIX/include" LDFLAGS="-L$PREFIX/lib" || exit
@@ -169,7 +169,7 @@ getidn() {
 
 
 getgnutls() {
-  fem ftp://ftp.gnutls.org/gcrypt/gnutls/v${GNUTLS_VERSION%.*}/ gnutls-$GNUTLS_VERSION.tar.xz gnutls
+  fem https://www.gnupg.org/ftp/gcrypt/gnutls/v${GNUTLS_VERSION%.*}/ gnutls-$GNUTLS_VERSION.tar.xz gnutls
   prebuild gnutls || return
   $srcdir/configure --prefix=$PREFIX --disable-gtk-doc-html --disable-shared --disable-silent-rules\
     --enable-static --disable-cxx --disable-srp-authentication --disable-openssl-compatibility\
@@ -184,7 +184,7 @@ getgnutls() {
 
 
 getncurses() {
-  fem http://ftp.gnu.org/pub/gnu/ncurses/ ncurses-$NCURSES_VERSION.tar.gz ncurses
+  fem https://invisible-mirror.net/archives/ncurses/ ncurses-$NCURSES_VERSION.tar.gz ncurses
   prebuild ncurses || return
   $srcdir/configure --prefix=$PREFIX\
     --without-cxx --without-cxx-binding --without-ada --without-manpages --without-progs\
@@ -200,7 +200,7 @@ getncurses() {
 
 
 getglib() {
-  fem http://ftp.gnome.org/pub/gnome/sources/glib/${GLIB_VERSION%.*}/ glib-$GLIB_VERSION.tar.xz glib
+  fem https://download.gnome.org/sources/glib/${GLIB_VERSION%.*}/ glib-$GLIB_VERSION.tar.xz glib
   prebuild glib || return
 
   # Get rid of GObject & GIO stuff from the meson build, ncdc doesn't need it.
@@ -210,9 +210,10 @@ getglib() {
       | sed -E "s/.+GLIB_LOCALE_DIR.+/glib_conf.set_quoted('GLIB_LOCALE_DIR', '\\/usr\\/share\\/locale')/"\
       > $srcdir/meson.build
 
+  # --force-fallback-for=pcre --force-fallback-for=libffi
   meson setup . $srcdir --cross-file ../../meson-cross-$TARGET.txt --prefix=$PREFIX\
-      --localedir=localexxx -Ddefault_library=static\
-      -Dlibmount=disabled -Dinternal_pcre=true -Dnls=disabled -Dc_args="$CFLAGS" -Dcpp_args="$CFLAGS" || exit
+      --localedir=localexxx --wrap-mode=forcefallback -Ddefault_library=static\
+      -Dlibmount=disabled -Dnls=disabled -Dtests=false -Dc_args="$CFLAGS" -Dcpp_args="$CFLAGS" || exit
   ninja install || exit
   postbuild
 }

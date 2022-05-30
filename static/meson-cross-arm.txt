@@ -3,7 +3,7 @@ c = 'arm-linux-musleabi-gcc'
 cpp = 'arm-linux-musleabi-g++'
 ar = 'arm-linux-musleabi-ar'
 strip = 'arm-linux-musleabi-strip'
-pkgconfig = 'pkg-config'
+pkgconfig = 'true'
 
 [properties]
 needs_exe_wrapper = true
