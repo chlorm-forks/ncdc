@@ -1,3 +1,11 @@
+1.23 - 2022-05-30
+	- Bump minimum glib version to 2.32
+	- Re-open GeoIP database on SIGUSR1
+	- Add tls_policy=force setting
+	- Fix TLS on Verlihub
+	- Various minor language fixes
+	- Add workaround rare compiler bug for aarch64
+
 1.22.1 - 2019-06-03
 	- Fix segfault with ADC client connections
 
